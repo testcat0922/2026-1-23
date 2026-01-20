@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>影片＋GIF 輪播（支援 TXT 秒數）</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: black;
+    }
+    video, img {
+      position: absolute;
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+      top: 0;
+      left: 0;
+    }
+    #gifPlayer {
+      display: none;
+    }
+    /* 如果讀取失敗，用來顯示錯誤訊息 */
+    #errorMsg {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #fff;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      text-align: center;
+      padding: 1rem 1.5rem;
+      background: rgba(0,0,0,0.6);
+      border-radius: 8px;
+      white-space: pre-line;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 影片播放器 -->
+  <video id="player" autoplay muted playsinline></video>
+  <!-- 顯示 GIF 用 -->
+  <img id="gifPlayer" />
+
+  <div id="errorMsg" style="display:none;"></div>
+
+  <script>
+    // 這裡改成你 GitHub Releases 的路徑
+    const baseURL = "https://github.com/testcat0922/11-14-Video/releases/latest/download/";
+
+    const videoEl = document.getElementById("player");
+    const gifEl   = document.getElementById("gifPlayer");
+    const errorEl = document.getElementById("errorMsg");
+
+    let playlist = [];
+    let index    = 0;
+    let gifTimer = null;
+
+    // 顯示錯誤訊息用
+    function showError(msg) {
+      console.error(msg);
+      errorEl.textContent = msg;
+      errorEl.style.display = "block";
+      // 也把畫面清空
+      videoEl.style.display = "none";
+      gifEl.style.display   = "none";
+    }
+
+    // 從 videos.txt 載入清單
+    async function loadList() {
+      // 加上時間戳避免 cache
+      const res = await fetch("videos.txt?ts=" + Date.now());
+      if (!res.ok) {
+        throw new Error("無法載入 videos.txt（HTTP " + res.status + "）");
+      }
+
+      const text = await res.text();
+      const lines = text
+        .split("\n")
+        .map(l => l.trim())
+        .filter(l => l && !l.startsWith("#")); // 可以用 # 當註解
+
+      if (lines.length === 0) {
+        throw new Error("videos.txt 內容是空的。");
+      }
+
+      const list = lines.map((line, i) => {
+        const parts = line.split("|");
+        const name = (parts[0] || "").trim();
+        const durRaw = (parts[1] || "").trim();
+
+        if (!name) {
+          console.warn("第 " + (i + 1) + " 行檔名是空的，會被略過。");
+          return null;
+        }
+
+        let durationSeconds = null;
+        if (durRaw !== "") {
+          const num = parseFloat(durRaw);
+          if (!isNaN(num) && num > 0) {
+            durationSeconds = num; // 單位：秒
+          }
+        }
+
+        return {
+          url: baseURL + name,
+          durationSeconds
+        };
+      }).filter(Boolean);
+
+      if (list.length === 0) {
+        throw new Error("videos.txt 沒有任何有效的項目。");
+      }
+
+      return list;
+    }
+
+    function playItem(i) {
+      const item = playlist[i];
+      if (!item) return;
+
+      const isGif = item.url.toLowerCase().endsWith(".gif");
+
+      // 清掉前一個 GIF 計時器
+      if (gifTimer) {
+        clearTimeout(gifTimer);
+        gifTimer = null;
+      }
+
+      if (isGif) {
+        // 播 GIF
+        videoEl.pause();
+        videoEl.removeAttribute("src");
+        videoEl.load();
+
+        videoEl.style.display = "none";
+        gifEl.style.display   = "block";
+
+        // 加時間戳避免瀏覽器 cache
+        gifEl.src = item.url + "?v=" + Date.now();
+
+        // 如果沒設定時間，預設 10 秒
+        const seconds = item.durationSeconds ?? 10;
+        const ms = seconds * 1000;
+
+        gifTimer = setTimeout(next, ms);
+      } else {
+        // 播影片（mp4 / webm 等）
+        gifEl.style.display = "none";
+        gifEl.removeAttribute("src");
+
+        videoEl.style.display = "block";
+        videoEl.src = item.url + "?v=" + Date.now();
+        videoEl.load();
+        videoEl.play().catch(err => {
+          console.warn("Autoplay 失敗：", err);
+        });
+      }
+    }
+
+    function next() {
+      index = (index + 1) % playlist.length;
+      playItem(index);
+    }
+
+    // 影片結束就播下一個
+    videoEl.addEventListener("ended", next);
+
+    // 入口：載入清單後開始播放
+    (async () => {
+      try {
+        playlist = await loadList();
+        index = 0;
+        playItem(index);
+      } catch (err) {
+        showError("載入播放清單失敗：\n" + err.message);
+      }
+    })();
+  </script>
+
+</body>
+</html>
